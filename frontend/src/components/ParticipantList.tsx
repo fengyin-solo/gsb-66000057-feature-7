@@ -2,27 +2,15 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { getRoomParticipants, updateRoomStatus, getRoomById, heartbeat } from '../services/interviewRoomService';
 import { subscribeParticipants, sendHeartbeat, connect, disconnect } from '../services/websocketService';
 import { useInterviewStore } from '../store/interview';
-import { ParticipantStatus, getRoomStatusConfig, formatTime } from '../types';
-
-const formatTimeAgo = (dateString: string): string => {
-  const now = new Date().getTime();
-  const date = new Date(dateString).getTime();
-  const diff = now - date;
-
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (seconds < 60) return '刚刚';
-  if (minutes < 60) return `${minutes}分钟前`;
-  if (hours < 24) return `${hours}小时前`;
-  return `${days}天前`;
-};
+import { ParticipantStatus, getRoomStatusConfig, formatTime, formatTimeAgo } from '../types';
+import { useParticipantTimeline, ParticipationEvent } from '../hooks/useParticipantTimeline';
+import { ParticipationOverview } from './ParticipationOverview';
 
 interface JoinedNotification {
-  id: string;
-  name: string;
+  key: string;
+  names: string[];
+  /** true for reconnects (掉线后重进), false for first-time joins */
+  isRejoin: boolean;
 }
 
 interface ParticipantListProps {
@@ -32,14 +20,15 @@ interface ParticipantListProps {
 const ParticipantList: React.FC<ParticipantListProps> = ({ roomId }) => {
   const { currentUser, participants, setParticipants, currentRoom, setCurrentRoom, invitations } = useInterviewStore();
   const [copied, setCopied] = useState(false);
+  const [participantsLoaded, setParticipantsLoaded] = useState(false);
   const [joinedNotification, setJoinedNotification] = useState<JoinedNotification | null>(null);
-  const prevParticipantsRef = useRef<ParticipantStatus[]>([]);
   const notificationTimerRef = useRef<number | null>(null);
 
   const fetchParticipants = useCallback(async () => {
     try {
       const data = await getRoomParticipants(roomId);
       setParticipants(data);
+      setParticipantsLoaded(true);
     } catch (error) {
       console.error('Failed to fetch participants:', error);
     }
@@ -100,59 +89,33 @@ const ParticipantList: React.FC<ParticipantListProps> = ({ roomId }) => {
     }
   };
 
-  useEffect(() => {
-    const prevParticipants = prevParticipantsRef.current;
-    const currentParticipants = participants;
+  const handleLiveEvents = useCallback((liveEvents: ParticipationEvent[]) => {
+    // Only arrivals deserve the popup; joins and reconnects observed in the
+    // same snapshot are batched into one notification (多人同时变动).
+    const arrivals = liveEvents.filter((event) => event.type === 'JOIN' || event.type === 'REJOIN');
+    if (arrivals.length === 0) return;
 
-    if (prevParticipants.length > 0 && currentParticipants.length > 0) {
-      const prevCandidateIds = new Set(
-        prevParticipants
-          .filter((p) => p.userRole === 'CANDIDATE' && p.isOnline)
-          .map((p) => p.userId)
-      );
+    const isRejoin = arrivals.every((event) => event.type === 'REJOIN');
+    setJoinedNotification({
+      key: arrivals.map((event) => event.id).join('|'),
+      names: arrivals.map((event) => event.userName),
+      isRejoin,
+    });
 
-      const newOnlineCandidates = currentParticipants.filter(
-        (p) => p.userRole === 'CANDIDATE' && p.isOnline && !prevCandidateIds.has(p.userId)
-      );
-
-      if (newOnlineCandidates.length > 0) {
-        const candidate = newOnlineCandidates[0];
-        setJoinedNotification({ id: candidate.id, name: candidate.userName });
-
-        if (notificationTimerRef.current) {
-          clearTimeout(notificationTimerRef.current);
-        }
-        notificationTimerRef.current = setTimeout(() => {
-          setJoinedNotification(null);
-          notificationTimerRef.current = null;
-        }, 3000);
-      }
-    } else if (prevParticipants.length === 0 && currentParticipants.length > 0) {
-      const onlineCandidates = currentParticipants.filter(
-        (p) => p.userRole === 'CANDIDATE' && p.isOnline
-      );
-      if (onlineCandidates.length > 0) {
-        const candidate = onlineCandidates[0];
-        setJoinedNotification({ id: candidate.id, name: candidate.userName });
-
-        if (notificationTimerRef.current) {
-          clearTimeout(notificationTimerRef.current);
-        }
-        notificationTimerRef.current = setTimeout(() => {
-          setJoinedNotification(null);
-          notificationTimerRef.current = null;
-        }, 3000);
-      }
+    if (notificationTimerRef.current) {
+      clearTimeout(notificationTimerRef.current);
     }
+    notificationTimerRef.current = setTimeout(() => {
+      setJoinedNotification(null);
+      notificationTimerRef.current = null;
+    }, 3000);
+  }, []);
 
-    prevParticipantsRef.current = currentParticipants;
+  const timelineEvents = useParticipantTimeline(roomId, participants, participantsLoaded, handleLiveEvents);
 
-    return () => {
-      if (notificationTimerRef.current) {
-        clearTimeout(notificationTimerRef.current);
-      }
-    };
-  }, [participants]);
+  useEffect(() => {
+    setParticipantsLoaded(false);
+  }, [roomId]);
 
   const getInvitationForParticipant = (participant: ParticipantStatus) => {
     return invitations.find(
@@ -167,6 +130,15 @@ const ParticipantList: React.FC<ParticipantListProps> = ({ roomId }) => {
   };
 
   const isInterviewer = currentUser?.role === 'INTERVIEWER';
+
+  useEffect(() => {
+    return () => {
+      if (notificationTimerRef.current) {
+        clearTimeout(notificationTimerRef.current);
+        notificationTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -206,6 +178,7 @@ const ParticipantList: React.FC<ParticipantListProps> = ({ roomId }) => {
       unsubscribe = subscribeParticipants(roomId, (data) => {
         if (mounted) {
           setParticipants(data);
+          setParticipantsLoaded(true);
         }
       });
     };
@@ -280,6 +253,7 @@ const ParticipantList: React.FC<ParticipantListProps> = ({ roomId }) => {
 
       {joinedNotification && (
         <div
+          key={joinedNotification.key}
           className="notification-bar"
           style={{
             position: 'fixed',
@@ -301,7 +275,7 @@ const ParticipantList: React.FC<ParticipantListProps> = ({ roomId }) => {
           }}
         >
           <span style={{ flex: 1 }}>
-            候选人 {joinedNotification.name} 已加入面试
+            {joinedNotification.isRejoin ? '成员' : '候选人'} {joinedNotification.names.join('、')} {joinedNotification.isRejoin ? '已重新加入面试' : '已加入面试'}
           </span>
           <button
             onClick={handleCloseNotification}
@@ -437,6 +411,8 @@ const ParticipantList: React.FC<ParticipantListProps> = ({ roomId }) => {
           </div>
         )}
 
+        <ParticipationOverview participants={participants} events={timelineEvents} />
+
         <div>
           <h4 style={{
             margin: '0 0 12px 0',
@@ -447,6 +423,19 @@ const ParticipantList: React.FC<ParticipantListProps> = ({ roomId }) => {
             参与者 ({participants.length})
           </h4>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {participants.length === 0 && (
+              <div style={{
+                padding: '16px',
+                textAlign: 'center',
+                fontSize: '12px',
+                color: '#666',
+                backgroundColor: '#252525',
+                borderRadius: '6px',
+                border: '1px solid #333',
+              }}>
+                暂无成员加入
+              </div>
+            )}
             {participants.map((participant) => {
               const isCandidate = participant.userRole === 'CANDIDATE';
               const isHighlighted = isInterviewer && isCandidate;
