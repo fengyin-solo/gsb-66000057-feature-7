@@ -2,23 +2,8 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { getRoomParticipants, updateRoomStatus, getRoomById, heartbeat } from '../services/interviewRoomService';
 import { subscribeParticipants, sendHeartbeat, connect, disconnect } from '../services/websocketService';
 import { useInterviewStore } from '../store/interview';
-import { ParticipantStatus, getRoomStatusConfig, formatTime } from '../types';
-
-const formatTimeAgo = (dateString: string): string => {
-  const now = new Date().getTime();
-  const date = new Date(dateString).getTime();
-  const diff = now - date;
-
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (seconds < 60) return '刚刚';
-  if (minutes < 60) return `${minutes}分钟前`;
-  if (hours < 24) return `${hours}小时前`;
-  return `${days}天前`;
-};
+import { ParticipantStatus, getRoomStatusConfig, formatTime, formatTimeAgo } from '../types';
+import ParticipantOverview from './ParticipantOverview';
 
 interface JoinedNotification {
   id: string;
@@ -436,6 +421,8 @@ const ParticipantList: React.FC<ParticipantListProps> = ({ roomId }) => {
             )}
           </div>
         )}
+
+        <ParticipantOverview participants={participants} currentUserId={currentUser?.id} />
 
         <div>
           <h4 style={{

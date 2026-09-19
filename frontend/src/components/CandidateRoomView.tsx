@@ -7,6 +7,7 @@ import { ProblemPanel } from './ProblemPanel';
 import { CodeEditor } from './CodeEditor';
 import { ParticipantStatus, getRoomStatusConfig, formatDuration, formatTime } from '../types';
 import { getProblemById } from '../services/problemService';
+import ParticipantOverview from './ParticipantOverview';
 
 const CandidateRoomView: React.FC = () => {
   const { roomId } = useParams<{ roomId: string }>();
@@ -682,6 +683,7 @@ const CandidateRoomView: React.FC = () => {
               ×
             </button>
           </div>
+          <ParticipantOverview participants={participants} currentUserId={currentUser?.id} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {participants.map((participant: ParticipantStatus) => {
               const isSelf = currentUser && participant.userId === currentUser.id;

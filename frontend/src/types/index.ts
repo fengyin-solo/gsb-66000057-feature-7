@@ -79,6 +79,18 @@ export interface ParticipantStatus {
   joinedAt: string;
 }
 
+export type ParticipantEventType = 'JOINED' | 'LEFT' | 'REJOINED';
+
+export interface ParticipantEvent {
+  id: string;
+  userId: string;
+  userName: string;
+  userRole: 'INTERVIEWER' | 'CANDIDATE';
+  type: ParticipantEventType;
+  time: string;
+  seq: number;
+}
+
 export interface InterviewRoom {
   id: string;
   roomCode: string;
@@ -307,4 +319,20 @@ export const formatTime = (dateString: string): string => {
     minute: '2-digit',
     second: '2-digit',
   });
+};
+
+export const formatTimeAgo = (dateString: string): string => {
+  const now = new Date().getTime();
+  const date = new Date(dateString).getTime();
+  const diff = now - date;
+
+  const seconds = Math.floor(diff / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (seconds < 60) return '刚刚';
+  if (minutes < 60) return `${minutes}分钟前`;
+  if (hours < 24) return `${hours}小时前`;
+  return `${days}天前`;
 };
